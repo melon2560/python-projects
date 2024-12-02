@@ -10,3 +10,14 @@ PyTorchまたはTensorFlowを学び、シンプルなニューラルネットワ
 GitHubにプロジェクトを公開し、フィードバックをもらう。簡単なドキュメントやREADMEを整備し、他の人にもわかりやすいリポジトリを作る。
 
 ブログやSNSで発信を始める。学んだことをアウトプットすることで理解を深めるとともに、技術的な発信力も磨いていく。
+
+# Transformer Learning Project
+
+このプロジェクトはHugging Faceライブラリを使用して学習をするファイルです。
+
+##使い方
+1. 必要なライブラリをインストール
+pip install transformers
+
+2. Pythonスクリプトを実行
+python transformer_example.py
