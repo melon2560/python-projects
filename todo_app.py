@@ -1,188 +1,215 @@
 import sqlite3
 import tkinter as tk
+from datetime import datetime
+from tkinter import ttk
 from tkinter import messagebox
 
-# データベース接続
-def connect_db():
-    return sqlite3.connect('todo.db')
+class TodoApp:
+    def __init__(self):
+        self.current_filter_status = None
+        self.root = tk.Tk()
+        self.root.title("TODOアプリ")
+        self.root.geometry("400x300")
+        
+        self.create_table()
+        self.create_gui()
+        
+    def connect_db(self):
+        return sqlite3.connect('todo.db')
 
-# タスクテーブルを作成
-def create_table():
-    conn = connect_db()
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            done INTEGER NOT NULL DEFAULT 0
+    def create_table(self):
+        conn = self.connect_db()
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                done INTEGER NOT NULL DEFAULT 0,
+                due_date TEXT
+            )
+        ''')
+        conn.commit()
+        conn.close()
+
+    def get_tasks(self, filter_status=None, sort_by_date=False):
+        connection = self.connect_db()
+        cursor = connection.cursor()
+        
+        if filter_status is None and not sort_by_date:
+            cursor.execute("SELECT * FROM tasks")
+        elif filter_status is None and sort_by_date:
+            cursor.execute("SELECT * FROM tasks ORDER BY due_date ASC")
+        elif filter_status is not None and sort_by_date:
+            cursor.execute("SELECT * FROM tasks WHERE done=? ORDER BY due_date ASC", (filter_status,))
+        else:
+            cursor.execute("SELECT * FROM tasks WHERE done=?", (filter_status,))
+            
+        tasks = cursor.fetchall()
+        connection.close()
+        return tasks
+
+    def display_tasks(self, tasks=None):
+        if tasks is None:
+            tasks = self.get_tasks()
+            
+        for widget in self.task_frame.winfo_children():
+            widget.destroy()
+
+        today = datetime.now().date()
+
+        for task in tasks:
+            task_id, title, done, due_date = task
+            status = "完了" if done else "未完了"
+            
+            color, formatted_due_date = self.format_due_date(due_date, today)
+
+            self.create_task_widgets(task_id, title, status, formatted_due_date, done, color)
+
+    def format_due_date(self, due_date, today):
+        try:
+            if due_date:
+                due_date_date = datetime.strptime(due_date, "%Y-%m-%d").date()
+                color = "red" if due_date_date < today else "black"
+                formatted_due_date = due_date_date.strftime("%Y-%m-%d")
+            else:
+                color = "black"
+                formatted_due_date = "未設定"
+        except ValueError:
+            color = "black"
+            formatted_due_date = "不正な日付"
+        return color, formatted_due_date
+
+    def create_task_widgets(self, task_id, title, status, due_date, done, color):
+        task_label = tk.Label(
+            self.task_frame,
+            text=f"{title} - {status} - 締切日: {due_date}",
+            fg=color
         )
-    ''')
-    conn.commit()
-    conn.close()
-
-# タスクを取得する関数
-def get_tasks():
-    connection = connect_db()
-    cursor = connection.cursor()
-    cursor.execute("SELECT * FROM tasks")
-    tasks = cursor.fetchall()
-    connection.close()
-    return tasks
-
-# タスクを表示する関数
-def display_tasks():
-
-    task_count = get_task_count()  # タスクの数を取得
-
-    for widget in task_frame.winfo_children():
-        widget.destroy()  # 既存のウィジェットを削除
-
-    tasks = get_tasks()  # 最新のタスクを取得
-
-    for task in tasks:
-        task_id, title, done = task
-        status = "完了" if done else "未完了"
-
-        # タスク表示のラベル
-        task_label = tk.Label(task_frame, text=f"{task_count}. {title} - {status}")
         task_label.pack(anchor="w")
 
-        # 状態変更ボタン
         toggle_button = tk.Button(
-            task_frame,
+            self.task_frame,
             text="Toggle Status",
-            command=lambda task_id=task_id, done=done: toggle_task_status(task_id, done)
+            command=lambda: self.toggle_task_status(task_id, done)
         )
         toggle_button.pack(anchor="w")
 
-        # 削除ボタン
         delete_button = tk.Button(
-            task_frame,
+            self.task_frame,
             text="Delete",
-            command=lambda task_id=task_id: delete_task(task_id)
+            command=lambda: self.delete_task(task_id)
         )
         delete_button.pack(anchor="w")
 
-# タスクを追加する関数
-def add_task():
-    task_title = task_entry.get()  # task_entry を使って入力されたタスク名を取得
-    if task_title:
-        connection = connect_db()
+    def set_placeholder(self, entry, placeholder):
+        def on_focus_in(event):
+            if entry.get() == placeholder:
+                entry.delete(0, tk.END)
+                entry.config(foreground="black")
+
+        def on_focus_out(event):
+            if not entry.get():
+                entry.insert(0, placeholder)
+                entry.config(foreground="grey")
+
+        entry.insert(0, placeholder)
+        entry.config(foreground="grey")
+        entry.bind("<FocusIn>", on_focus_in)
+        entry.bind("<FocusOut>", on_focus_out)
+
+    def add_task(self):
+        task_title = self.task_entry.get()
+        due_date = self.due_date_entry.get()
+
+        try:
+            due_date = datetime.strptime(due_date, "%Y%m%d").strftime("%Y-%m-%d")
+        except ValueError:
+            try:
+                due_date = datetime.strptime(due_date, "%Y-%m-%d").strftime("%Y-%m-%d")
+            except ValueError:
+                messagebox.showerror("エラー", "日付は 'YYYY-MM-DD' または 'YYYYMMDD' の形式で入力してください。")
+                return
+
+        if task_title and due_date:
+            connection = self.connect_db()
+            cursor = connection.cursor()
+            cursor.execute("INSERT INTO tasks (title, done, due_date) VALUES (?, ?, ?)", 
+                         (task_title, 0, due_date))
+            connection.commit()
+            connection.close()
+            
+            messagebox.showinfo("情報", "タスクが追加されました！")
+            self.task_entry.delete(0, tk.END)
+            self.due_date_entry.delete(0, tk.END)
+            self.display_tasks()
+        else:
+            messagebox.showwarning("警告", "タスク名と締切日を入力してください。")
+
+    def delete_task(self, task_id):
+        connection = self.connect_db()
         cursor = connection.cursor()
-        cursor.execute("INSERT INTO tasks (title, done) VALUES (?, ?)", (task_title, 0))
+        cursor.execute("DELETE FROM tasks WHERE id=?", (task_id,))
         connection.commit()
         connection.close()
-        messagebox.showinfo("情報", "タスクが追加されました！")
-        task_entry.delete(0, tk.END)  # テキストボックスを空にする
-        display_tasks()  # 追加後にタスクリストを更新
-    else:
-        messagebox.showwarning("警告", "タスク名を入力してください。")
+        self.display_tasks()
 
-# タスクを削除する関数
-def delete_task(task_id):
-    connection = connect_db()
-    cursor = connection.cursor()
-    cursor.execute("DELETE FROM tasks WHERE id=?", (task_id,))
-    connection.commit()
-    connection.close()
-    display_tasks()  # タスク削除後、タスクリストを更新
+    def toggle_task_status(self, task_id, current_status):
+        new_status = 1 if current_status == 0 else 0
+        connection = self.connect_db()
+        cursor = connection.cursor()
+        cursor.execute("UPDATE tasks SET done = ? WHERE id = ?", (new_status, task_id))
+        connection.commit()
+        connection.close()
+        self.display_tasks()
 
-def get_task_count():
-    connection = sqlite3.connect("todo.db")  # データベース接続
-    cursor = connection.cursor()
-    cursor.execute("SELECT COUNT(*) FROM tasks")  # タスクの数を取得
-    count = cursor.fetchone()[0]  # 結果はタプルで返されるので、最初の要素を取得
-    connection.close()  # 接続を閉じる
-    return count
+    def refresh_tasks(self, filter_status=None):
+        self.current_filter_status = filter_status
+        tasks = self.get_tasks(filter_status)
+        self.display_tasks(tasks)
 
-# タスクのステータスを変更する関数
-def toggle_task_status(task_id, current_status):
-    new_status = 1 if current_status == 0 else 0
-    connection = connect_db()
-    cursor = connection.cursor()
-    cursor.execute("UPDATE tasks SET done = ? WHERE id = ?", (new_status, task_id))
-    connection.commit()
-    connection.close()
-    display_tasks()  # ステータス変更後、タスクリストを更新
+    def display_sorted_tasks(self):
+        tasks = self.get_tasks(self.current_filter_status, sort_by_date=True)
+        self.display_tasks(tasks)
 
-    # フィルタリングされたタスクを取得する関数
-def filter_tasks(status):
-    connection = connect_db()
-    cursor = connection.cursor()
-    cursor.execute("SELECT * FROM tasks WHERE done=?", (status,))
-    tasks = cursor.fetchall()
-    connection.close()
-    return tasks
+    def create_gui(self):
+        self.task_entry = ttk.Entry(self.root, width=40)
+        self.task_entry.pack(pady=10)
+        self.set_placeholder(self.task_entry, "タスク名を入力してください。")
 
-# タスクリストをリフレッシュする関数
-def refresh_tasks(filter_status=None):
-    """
-    タスクリストを更新する関数。
-    filter_status が None の場合は全てのタスクを表示。
-    filter_status が 0 の場合は未完了のタスクのみを表示。
-    filter_status が 1 の場合は完了したタスクのみを表示。
-    """
-    for widget in task_frame.winfo_children():
-        widget.destroy()  # 既存のタスクを削除
+        self.due_date_entry = ttk.Entry(self.root, width=40)
+        self.due_date_entry.pack(pady=10)
+        self.set_placeholder(self.due_date_entry, "日付を'YYYY-MM-DD'形式で入力してください。")
 
-    if filter_status is None:
-        tasks = get_tasks()  # 全てのタスクを取得
-    else:
-        tasks = filter_tasks(filter_status)  # フィルタリングされたタスクを取得
+        add_button = tk.Button(self.root, text="タスクを追加", command=self.add_task)
+        add_button.pack(pady=5)
 
-    for task in tasks:
-        task_id, title, done = task
-        status = "完了" if done else "未完了"
+        filter_frame = tk.Frame(self.root)
+        filter_frame.pack(pady=10)
 
-        task_label = tk.Label(task_frame, text=f"{task_id}. {title} - {status}")
-        task_label.pack(anchor="w")
+        show_all_button = tk.Button(filter_frame, text="全て表示", 
+                                  command=lambda: self.refresh_tasks())
+        show_all_button.pack(side=tk.LEFT, padx=5)
 
-        toggle_button = tk.Button(
-            task_frame,
-            text="Toggle Status",
-            command=lambda task_id=task_id, done=done: toggle_task_status(task_id, done)
-        )
-        toggle_button.pack(anchor="w")
+        show_incomplete_button = tk.Button(filter_frame, text="未完了のみ表示", 
+                                         command=lambda: self.refresh_tasks(0))
+        show_incomplete_button.pack(side=tk.LEFT, padx=5)
 
-        delete_button = tk.Button(
-            task_frame,
-            text="Delete",
-            command=lambda task_id=task_id: delete_task(task_id)
-        )
-        delete_button.pack(anchor="w")
+        show_complete_button = tk.Button(filter_frame, text="完了のみ表示", 
+                                       command=lambda: self.refresh_tasks(1))
+        show_complete_button.pack(side=tk.LEFT, padx=5)
 
-# GUI全体を構築する関数
-def create_gui():
-    global task_frame, task_entry
+        sort_by_due_date_button = tk.Button(filter_frame, text="締切日順に表示", 
+                                          command=self.display_sorted_tasks)
+        sort_by_due_date_button.pack(side=tk.LEFT, padx=5)
 
-    task_entry = tk.Entry(root, width=30)
-    task_entry.pack(pady=10)
+        self.task_frame = tk.Frame(self.root)
+        self.task_frame.pack(pady=10, fill=tk.BOTH, expand=True)
 
-    add_button = tk.Button(root, text="タスクを追加", command=add_task)
-    add_button.pack(pady=5)
+        self.display_tasks()
 
-    filter_frame = tk.Frame(root)
-    filter_frame.pack(pady=10)
+    def run(self):
+        self.root.mainloop()
 
-    show_all_button = tk.Button(filter_frame, text="全て表示", command=display_tasks)
-    show_all_button.pack(side=tk.LEFT, padx=5)
-
-    show_incomplete_button = tk.Button(filter_frame, text="未完了のみ表示", command=lambda: refresh_tasks(0))
-    show_incomplete_button.pack(side=tk.LEFT, padx=5)
-
-    show_complete_button = tk.Button(filter_frame, text="完了のみ表示", command=lambda: refresh_tasks(1))
-    show_complete_button.pack(side=tk.LEFT, padx=5)
-
-    task_frame = tk.Frame(root)
-    task_frame.pack(pady=10, fill=tk.BOTH, expand=True)
-
-    display_tasks()
-
-# ウィンドウ作成
-root = tk.Tk()
-root.title("TODOアプリ")
-root.geometry("400x300")
-
-create_table()
-create_gui()
-root.mainloop()
+if __name__ == "__main__":
+    app = TodoApp()
+    app.run()
